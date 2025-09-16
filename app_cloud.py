@@ -1,199 +1,210 @@
 import streamlit as st
-from openai import OpenAI
 import os
 import json
-import csv
-import shutil
+import pandas as pd
 from pptx import Presentation
+from openai import OpenAI
 from pathlib import Path
+import shutil
 
-# ==============================================================
-# 🔑 API Key Setup (Secrets Only: local + cloud)
-# ==============================================================
-
+# -----------------------------
+# Setup (Cloud)
+# -----------------------------
 if "OPENAI_API_KEY" not in st.secrets:
-    st.error("❌ No API key found. Please add it to .streamlit/secrets.toml (local) "
-             "or in Streamlit Cloud Settings → Secrets.")
+    st.error("❌ No API key found. Please add it in Streamlit Cloud → Settings → Secrets.")
     st.stop()
 
-api_key = st.secrets["OPENAI_API_KEY"]
-client = OpenAI(api_key=api_key)
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# ==============================================================
-# 📂 Helper Functions
-# ==============================================================
+DATA_DIR = "data"
+TEMPLATE = "templates/BIP_MCG_Case Study_Insert Case Study Name.pptx"
 
+# -----------------------------
+# Helpers
+# -----------------------------
 def extract_text_from_ppt(ppt_file):
-    """Extract all text from a PPTX file and return as string."""
+    """Extract all text from a PPTX file."""
     prs = Presentation(ppt_file)
     text_runs = []
     for slide in prs.slides:
         for shape in slide.shapes:
             if hasattr(shape, "text"):
                 text_runs.append(shape.text)
-    return "\n".join(text_runs)
+    return text_runs
 
 
-def save_raw_and_csv(text, output_dir, base_name):
-    """Save extracted text into raw.json and parsed.csv."""
-    raw_path = output_dir / "raw.json"
-    with open(raw_path, "w") as f:
-        json.dump({"text": text}, f, indent=2)
+def save_extracted(case_name, texts, original_file):
+    """Save raw.json, parsed.csv, and original PPT in a case folder."""
+    folder = os.path.join(DATA_DIR, case_name)
+    os.makedirs(folder, exist_ok=True)
 
-    csv_path = output_dir / "parsed.csv"
-    with open(csv_path, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["line_number", "content"])
-        for i, line in enumerate(text.splitlines(), 1):
-            writer.writerow([i, line])
+    # Save JSON
+    with open(os.path.join(folder, "raw.json"), "w", encoding="utf-8") as f:
+        json.dump({"text": texts}, f, indent=2)
 
-    return raw_path, csv_path
+    # Save CSV
+    df = pd.DataFrame({"content": texts})
+    df.to_csv(os.path.join(folder, "parsed.csv"), index=False)
+
+    # Save original PPT with original name
+    orig_name = f"Original - {original_file.name}"
+    with open(os.path.join(folder, orig_name), "wb") as f:
+        f.write(original_file.getbuffer())
+
+    return folder
 
 
-def generate_case_study_metadata(text):
-    """Call OpenAI to extract structured fields from text."""
+def analyze_case(texts):
+    """Call OpenAI to parse case study into structured JSON."""
+    joined_text = " ".join(texts)[:8000]  # truncate if huge
     prompt = f"""
-    You are a consulting analyst. Analyze the following case study text:
+    You are a consultant. Read this case study text and return structured JSON.
+    Rules:
+    - Replace real client names with "the client".
+    - Always refer to delivering company as "BIP".
+    - Case Study Name: ≤3–4 words, no dashes/colons.
+    - Category: consulting subcategory (e.g., Regulatory Compliance, Data Migration).
+    - Function: which office(s) are impacted.
+    - Challenge, Solution, Results: 3–4 sentences max each.
+    - Business Categories: 5 unique items, ≤2 words each.
+    - Hashtags: 3 unique buzzwords, 2–3 words each, no # symbol.
 
-    {text}
+    Case Study Text:
+    {joined_text}
 
-    Extract the following fields in JSON:
-    - case_study_name: short clear title
-    - category: a consulting subcategory (e.g., Data Migration, Regulatory Compliance, Program Management)
-    - function: the office/function impacted (e.g., COO Office, Compliance Office, PMO Office)
-    - challenge: 3–4 sentences describing the challenge
-    - solution: 3–4 sentences describing the solution (use BIP as the firm, anonymize the client)
-    - results: 3–4 sentences describing the results
-    - business_functions: list of up to 5 short (max 2 words) categories
-    - tags: 3 buzzword-like tags (no #, just plain words, max 3 words each)
+    Return JSON with keys:
+    case_study_name, category, function, challenge, solution, results,
+    business_categories, hashtags
     """
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.4,
+        response_format={"type": "json_object"}
     )
-
-    try:
-        content = response.choices[0].message.content
-        data = json.loads(content)
-    except Exception:
-        data = {
-            "case_study_name": "Unknown Case Study",
-            "category": "Uncategorized",
-            "function": "General Office",
-            "challenge": "Challenge not available.",
-            "solution": "Solution not available.",
-            "results": "Results not available.",
-            "business_functions": ["Consulting"],
-            "tags": ["General", "Business", "CaseStudy"],
-        }
-    return data
+    return response.choices[0].message.content
 
 
-def populate_template(template_path, output_path, metadata):
-    """Fill in the PPTX template with extracted metadata."""
-    prs = Presentation(template_path)
-    slide = prs.slides[0]  # assuming everything is on first slide
-
-    for shape in slide.shapes:
-        if not shape.has_text_frame:
-            continue
-        text = shape.text.strip()
-
-        if "Insert name of case study" in text:
-            shape.text = f"Case Study – {metadata['case_study_name']}"
-
-        elif "(Insert Category)" in text:
-            shape.text = metadata["category"]
-
-        elif "(Insert Function)" in text:
-            shape.text = metadata["function"]
-
-        elif "(Insert Challenge Here)" in text:
-            shape.text = metadata["challenge"]
-
-        elif "(Insert Solution Here)" in text:
-            shape.text = metadata["solution"]
-
-        elif "(Insert Results Here)" in text:
-            shape.text = metadata["results"]
-
-        elif "tagone" in text.lower():
-            shape.text = metadata["tags"][0]
-
-        elif "tagtwo" in text.lower():
-            shape.text = metadata["tags"][1]
-
-        elif "tagthree" in text.lower():
-            shape.text = metadata["tags"][2]
-
-        elif "BusinessFunction1" in text:
-            for i, func in enumerate(metadata["business_functions"], 1):
-                if f"BusinessFunction{i}" in text:
-                    shape.text = func
-
-    prs.save(output_path)
+def replace_in_shape(shape, placeholder, value):
+    """Replace placeholder text in runs, preserving formatting."""
+    if not shape.has_text_frame or not placeholder:
+        return False
+    replaced = False
+    for p in shape.text_frame.paragraphs:
+        for r in p.runs:
+            if placeholder in r.text:
+                r.text = r.text.replace(placeholder, value)
+                replaced = True
+    return replaced
 
 
-def create_zip(output_dir, base_name):
-    """Create a zip archive of the entire output directory."""
-    zip_path = shutil.make_archive(str(output_dir), "zip", root_dir=output_dir)
+def create_case_ppt(analysis_json, folder):
+    """Generate a new PPT from the template with parsed fields (fonts preserved)."""
+    prs = Presentation(TEMPLATE)
+    data = json.loads(analysis_json)
+
+    # -----------------------------
+    # Post-processing
+    # -----------------------------
+    name = data.get("case_study_name", "").strip()
+    name = name.replace("(", "").replace(")", "")
+    data["case_study_name"] = " ".join(name.split()[:6]) or "Case Study"
+
+    for field in ["challenge", "solution", "results"]:
+        text_val = data.get(field, "")
+        sentences = text_val.split(". ")
+        if len(sentences) > 4:
+            text_val = ". ".join(sentences[:4])
+        data[field] = text_val.strip()
+
+    hashtags = list(dict.fromkeys(data.get("hashtags") or []))[:3]
+    cleaned_tags = []
+    for tag in hashtags:
+        tag = tag.replace("#", "").strip()
+        tag = " ".join(tag.split()[:3])
+        if tag:
+            cleaned_tags.append(tag)
+    while len(cleaned_tags) < 3:
+        cleaned_tags.append("")
+    hashtags = cleaned_tags
+
+    bcs = data.get("business_categories") or []
+    seen = set()
+    clean_bcs = []
+    for x in bcs:
+        item = " ".join(x.split()[:2]).strip()
+        if item and item.lower() not in seen:
+            seen.add(item.lower())
+            clean_bcs.append(item)
+    while len(clean_bcs) < 5:
+        clean_bcs.append("")
+    clean_bcs = clean_bcs[:5]
+
+    # Replace in template
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            replace_in_shape(shape, "Insert name of case study", data["case_study_name"])
+            replace_in_shape(shape, "Insert Category", data.get("category", ""))
+            replace_in_shape(shape, "Insert Function", data.get("function", ""))
+            replace_in_shape(shape, "Insert Challenge Here", data.get("challenge", ""))
+            replace_in_shape(shape, "Insert Solution Here", data.get("solution", ""))
+            replace_in_shape(shape, "Insert Results Here", data.get("results", ""))
+            replace_in_shape(shape, "TagOne", hashtags[0])
+            replace_in_shape(shape, "TagTwo", hashtags[1])
+            replace_in_shape(shape, "TagThree", hashtags[2])
+            replace_in_shape(shape, "Business Category 1", clean_bcs[0])
+            replace_in_shape(shape, "Business Category 2", clean_bcs[1])
+            replace_in_shape(shape, "Business Category 3", clean_bcs[2])
+            replace_in_shape(shape, "Business Category 4", clean_bcs[3])
+            replace_in_shape(shape, "Business Category 5", clean_bcs[4])
+
+    out_file = os.path.join(folder, f"BIP_MCG_Case Study_{data['case_study_name']}.pptx")
+    prs.save(out_file)
+    return out_file
+
+
+def create_zip(folder, case_name):
+    """Package the case study folder into a ZIP."""
+    zip_path = shutil.make_archive(folder, "zip", root_dir=folder)
     return zip_path
 
-# ==============================================================
-# 🎨 Streamlit UI
-# ==============================================================
-
-st.title("📊 BIP Case Study Automation (Cloud Deployment)")
+# -----------------------------
+# Streamlit App (Cloud)
+# -----------------------------
+st.title("📊 BIP Case Study Processor (Cloud)")
 
 uploaded_files = st.file_uploader(
     "Upload up to 20 PPTX files",
-    type=["pptx"],
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    type=["pptx"]
 )
 
-# 🔧 FIX: point to templates/ folder
-TEMPLATE_PATH = "templates/BIP_MCG_Case Study_Insert Case Study Name.pptx"
-
 if uploaded_files:
-    for uploaded_file in uploaded_files:
-        st.write(f"Processing: {uploaded_file.name}")
+    for f in uploaded_files[:20]:  # cap at 20
+        case_name = os.path.splitext(f.name)[0]
+        st.write(f"Processing {case_name}...")
 
-        # Create output folder
-        base_name = Path(uploaded_file.name).stem
-        output_dir = Path("data") / base_name
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # 1. Extract text
+        texts = extract_text_from_ppt(f)
 
-        # Save original PPT
-        original_path = output_dir / f"Original - {uploaded_file.name}"
-        with open(original_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+        # 2. Save JSON + CSV + original PPT
+        folder = save_extracted(case_name, texts, f)
 
-        # Extract raw text
-        text = extract_text_from_ppt(original_path)
+        # 3. Analyze with OpenAI
+        analysis_json = analyze_case(texts)
 
-        # Save raw.json + parsed.csv
-        raw_path, csv_path = save_raw_and_csv(text, output_dir, base_name)
+        # 4. Generate new PPT
+        out_ppt = create_case_ppt(analysis_json, folder)
 
-        # Generate metadata via OpenAI
-        metadata = generate_case_study_metadata(text)
-
-        # Save new PPT
-        new_ppt_path = output_dir / f"BIP_MCG_Case Study_{metadata['case_study_name']}.pptx"
-        populate_template(TEMPLATE_PATH, new_ppt_path, metadata)
-
-        # Package everything into a ZIP
-        zip_path = create_zip(output_dir, base_name)
-
-        # Download button
-        with open(zip_path, "rb") as f:
+        # 5. Package into ZIP for download
+        zip_path = create_zip(folder, case_name)
+        with open(zip_path, "rb") as zf:
             st.download_button(
-                label="⬇️ Download Case Study ZIP",
-                data=f.read(),
-                file_name=f"{base_name}_case_study.zip",
+                label=f"⬇️ Download {case_name} ZIP",
+                data=zf.read(),
+                file_name=f"{case_name}_case_study.zip",
                 mime="application/zip"
             )
 
-        st.success(f"✅ Case study packaged: {zip_path}")
+        st.success(f"✅ Case study {case_name} packaged!")
 
