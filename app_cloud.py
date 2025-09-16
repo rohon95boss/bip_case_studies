@@ -3,6 +3,7 @@ from openai import OpenAI
 import os
 import json
 import csv
+import shutil
 from pptx import Presentation
 from pathlib import Path
 
@@ -135,6 +136,11 @@ def populate_template(template_path, output_path, metadata):
     prs.save(output_path)
 
 
+def create_zip(output_dir, base_name):
+    """Create a zip archive of the entire output directory."""
+    zip_path = shutil.make_archive(str(output_dir), "zip", root_dir=output_dir)
+    return zip_path
+
 # ==============================================================
 # 🎨 Streamlit UI
 # ==============================================================
@@ -147,6 +153,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
+# 🔧 FIX: point to templates/ folder
 TEMPLATE_PATH = "templates/BIP_MCG_Case Study_Insert Case Study Name.pptx"
 
 if uploaded_files:
@@ -176,5 +183,17 @@ if uploaded_files:
         new_ppt_path = output_dir / f"BIP_MCG_Case Study_{metadata['case_study_name']}.pptx"
         populate_template(TEMPLATE_PATH, new_ppt_path, metadata)
 
-        st.success(f"✅ Case study saved: {new_ppt_path}")
+        # Package everything into a ZIP
+        zip_path = create_zip(output_dir, base_name)
+
+        # Download button
+        with open(zip_path, "rb") as f:
+            st.download_button(
+                label="⬇️ Download Case Study ZIP",
+                data=f.read(),
+                file_name=f"{base_name}_case_study.zip",
+                mime="application/zip"
+            )
+
+        st.success(f"✅ Case study packaged: {zip_path}")
 
