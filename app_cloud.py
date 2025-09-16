@@ -4,15 +4,15 @@ import os
 import json
 import csv
 from pptx import Presentation
-from pptx.util import Pt
 from pathlib import Path
 
 # ==============================================================
-# 🔑 API Key Setup (Cloud Only)
+# 🔑 API Key Setup (Secrets Only: local + cloud)
 # ==============================================================
 
 if "OPENAI_API_KEY" not in st.secrets:
-    st.error("❌ No API key found. Please set OPENAI_API_KEY in Streamlit Secrets (App → Settings → Secrets).")
+    st.error("❌ No API key found. Please add it to .streamlit/secrets.toml (local) "
+             "or in Streamlit Cloud Settings → Secrets.")
     st.stop()
 
 api_key = st.secrets["OPENAI_API_KEY"]
@@ -35,12 +35,10 @@ def extract_text_from_ppt(ppt_file):
 
 def save_raw_and_csv(text, output_dir, base_name):
     """Save extracted text into raw.json and parsed.csv."""
-    # Save raw JSON
     raw_path = output_dir / "raw.json"
     with open(raw_path, "w") as f:
         json.dump({"text": text}, f, indent=2)
 
-    # Save parsed CSV (just split into lines for demo purposes)
     csv_path = output_dir / "parsed.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
