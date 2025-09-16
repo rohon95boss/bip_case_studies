@@ -12,8 +12,18 @@ from dotenv import load_dotenv
 # -----------------------------
 # Setup
 # -----------------------------
+# Load local .env if available
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# On Streamlit Cloud, load from st.secrets
+api_key = os.getenv("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY")
+
+if not api_key:
+    st.error("❌ No API key found. Please set OPENAI_API_KEY in .env (local) or Streamlit Secrets (cloud).")
+else:
+    st.sidebar.success("✅ API key loaded")
+
+client = OpenAI(api_key=api_key)
 
 TEMPLATE = "templates/BIP_MCG_Case Study_Insert Case Study Name.pptx"
 
@@ -150,7 +160,7 @@ def create_case_ppt(analysis_json, folder, orig_name):
         json.dump(data, f, indent=2)
 
     parsed_csv = os.path.join(folder, "parsed.csv")
-    pd.DataFrame({"content": data.values()}).to_csv(parsed_csv, index=False)
+    pd.DataFrame([data]).to_csv(parsed_csv, index=False)
 
     original_ppt = os.path.join(folder, f"Original - {orig_name}")
     return [final_ppt, raw_json, parsed_csv, original_ppt]
