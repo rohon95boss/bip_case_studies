@@ -147,7 +147,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-TEMPLATE_PATH = "BIP_MCG_Case Study_Insert Case Study Name.pptx"
+TEMPLATE_PATH = "templates/BIP_MCG_Case Study_Insert Case Study Name.pptx"
 
 if uploaded_files:
     for uploaded_file in uploaded_files:
