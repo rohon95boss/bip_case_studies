@@ -4,7 +4,6 @@ import json
 import pandas as pd
 from pptx import Presentation
 from openai import OpenAI
-from pathlib import Path
 import shutil
 
 # -----------------------------
@@ -60,21 +59,30 @@ def analyze_case(texts):
     prompt = f"""
     You are a consultant. Read this case study text and return structured JSON.
     Rules:
-    - Replace real client names with "the client".
+    - Never include real client names: replace with "the client".
     - Always refer to delivering company as "BIP".
-    - Case Study Name: ≤3–4 words, no dashes/colons.
-    - Category: consulting subcategory (e.g., Regulatory Compliance, Data Migration).
-    - Function: which office(s) are impacted.
-    - Challenge, Solution, Results: 3–4 sentences max each.
-    - Business Categories: 5 unique items, ≤2 words each.
-    - Hashtags: 3 unique buzzwords, 2–3 words each, no # symbol.
+    - Case Study Name:
+      • If the PPT text has a clear subject (e.g., Structured Notes), use it directly.
+      • If not, infer a professional name based on the content.
+      • Keep it short: max 3–4 words, no dashes/colons.
+    - Category: must be a consulting subcategory (e.g., Regulatory Compliance, Data Migration, Risk & Controls).
+      • Never just "Financial Services" or another generic industry.
+    - Function: which office(s) are impacted (e.g., COO Office, PMO Office).
+    - Challenge, Solution, Results:
+      • 3–4 sentences each.
+      • Concise enough to fit within 3–4 lines in a PPT textbox.
+      • Do not exceed 4 sentences.
+    - Business Categories: 5 unique items, ≤2 words each, no repeats.
+    - Hashtags: 3 unique buzzwords about products/solutions/core areas,
+      • 2–3 words each,
+      • no repeats,
+      • return WITHOUT the # symbol (because # will be a separate text box in PPT).
 
     Case Study Text:
     {joined_text}
 
     Return JSON with keys:
-    case_study_name, category, function, challenge, solution, results,
-    business_categories, hashtags
+    case_study_name, category, function, challenge, solution, results, business_categories, hashtags
     """
 
     response = client.chat.completions.create(
@@ -82,6 +90,7 @@ def analyze_case(texts):
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"}
     )
+
     return response.choices[0].message.content
 
 
