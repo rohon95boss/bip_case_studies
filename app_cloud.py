@@ -5,6 +5,8 @@ import pandas as pd
 from pptx import Presentation
 from openai import OpenAI
 import shutil
+import datetime
+import pathlib
 
 # -----------------------------
 # Setup (Cloud)
@@ -33,8 +35,12 @@ def extract_text_from_ppt(ppt_file):
 
 
 def save_extracted(case_name, texts, original_file):
-    """Save raw.json, parsed.csv, and original PPT in a case folder."""
-    folder = os.path.join(DATA_DIR, case_name)
+    """
+    Save raw.json, parsed.csv, and original PPT in a unique run folder.
+    Ensures each run is isolated (no duplicates).
+    """
+    run_id = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    folder = os.path.join(DATA_DIR, f"{case_name}_{run_id}")
     os.makedirs(folder, exist_ok=True)
 
     # Save JSON
@@ -173,7 +179,10 @@ def create_case_ppt(analysis_json, folder):
 
 
 def create_zip(folder, case_name):
-    """Package the case study folder into a ZIP."""
+    """
+    Package the run folder into a ZIP.
+    Always zips only the files from this run (no stale files).
+    """
     zip_path = shutil.make_archive(folder, "zip", root_dir=folder)
     return zip_path
 
@@ -196,7 +205,7 @@ if uploaded_files:
         # 1. Extract text
         texts = extract_text_from_ppt(f)
 
-        # 2. Save JSON + CSV + original PPT
+        # 2. Save JSON + CSV + original PPT into unique folder
         folder = save_extracted(case_name, texts, f)
 
         # 3. Analyze with OpenAI
