@@ -6,7 +6,6 @@ from pptx import Presentation
 from openai import OpenAI
 import shutil
 import datetime
-import pathlib
 
 # -----------------------------
 # Setup (Cloud)
@@ -60,7 +59,7 @@ def save_extracted(case_name, texts, original_file):
 
 
 def analyze_case(texts):
-    """Call OpenAI to parse case study into structured JSON including KPIs."""
+    """Call OpenAI to parse case study into structured JSON with KPIs."""
     joined_text = " ".join(texts)[:8000]  # truncate if huge
     prompt = f"""
     You are a consultant. Read this case study text and return structured JSON.
@@ -84,17 +83,18 @@ def analyze_case(texts):
       • no repeats,
       • return WITHOUT the # symbol (because # will be a separate text box in PPT).
     - KPIs:
-      • Always return exactly 3.
-      • Prefer explicit metrics if available (%, $, numbers).
-      • If not available, infer consulting-style KPIs in 3–10 words each.
-      • Each KPI must be outcome-driven (Reduced, Increased, Enhanced, Accelerated, Achieved).
-      • If fewer than 3 exist, fill missing with "N/A".
-
+      • First try to extract explicit metrics (numbers, percentages, dollar amounts) from the text.
+      • If no explicit metrics, fallback to short qualitative KPIs (3–10 words, consulting tone).
+      • Never invent numbers unless they appear in the text.
+      • If no useful content, leave the KPI empty ("").
+    
     Case Study Text:
     {joined_text}
 
     Return JSON with keys:
-    case_study_name, category, function, challenge, solution, results, business_categories, hashtags, kpi_1, kpi_2, kpi_3
+    case_study_name, category, function, challenge, solution, results,
+    business_categories, hashtags,
+    kpi_1, kpi_2, kpi_3
     """
 
     response = client.chat.completions.create(
@@ -108,7 +108,7 @@ def analyze_case(texts):
 
 def replace_in_shape(shape, placeholder, value):
     """Replace placeholder text in runs, preserving formatting."""
-    if not shape.has_text_frame or not placeholder:
+    if not shape.has_text_frame or value is None:
         return False
     replaced = False
     for p in shape.text_frame.paragraphs:
@@ -120,7 +120,7 @@ def replace_in_shape(shape, placeholder, value):
 
 
 def create_case_ppt(analysis_json, folder):
-    """Generate a new PPT from the template with parsed fields (fonts preserved)."""
+    """Generate a new PPT from the template with parsed fields + KPIs."""
     prs = Presentation(TEMPLATE)
     data = json.loads(analysis_json)
 
@@ -161,14 +161,15 @@ def create_case_ppt(analysis_json, folder):
         clean_bcs.append("")
     clean_bcs = clean_bcs[:5]
 
-    # KPIs: clean fallback
-    kpis = [
-        data.get("kpi_1", "").strip() or "N/A",
-        data.get("kpi_2", "").strip() or "N/A",
-        data.get("kpi_3", "").strip() or "N/A",
-    ]
+    # KPIs
+    kpis = [data.get("kpi_1", "").strip(),
+            data.get("kpi_2", "").strip(),
+            data.get("kpi_3", "").strip()]
+    kpis = [k for k in kpis if k]
 
+    # -----------------------------
     # Replace in template
+    # -----------------------------
     for slide in prs.slides:
         for shape in slide.shapes:
             replace_in_shape(shape, "Insert name of case study", data["case_study_name"])
@@ -185,9 +186,23 @@ def create_case_ppt(analysis_json, folder):
             replace_in_shape(shape, "Business Category 3", clean_bcs[2])
             replace_in_shape(shape, "Business Category 4", clean_bcs[3])
             replace_in_shape(shape, "Business Category 5", clean_bcs[4])
-            replace_in_shape(shape, "KPI1", kpis[0])
-            replace_in_shape(shape, "KPI2", kpis[1])
-            replace_in_shape(shape, "KPI3", kpis[2])
+
+            # KPIs: if present, replace; if all missing, blank out placeholders
+            if "KPI1" in shape.text or "KPI 1" in shape.text:
+                if len(kpis) > 0:
+                    replace_in_shape(shape, "KPI1", kpis[0])
+                else:
+                    shape.text = ""
+            if "KPI2" in shape.text or "KPI 2" in shape.text:
+                if len(kpis) > 1:
+                    replace_in_shape(shape, "KPI2", kpis[1])
+                else:
+                    shape.text = ""
+            if "KPI3" in shape.text or "KPI 3" in shape.text:
+                if len(kpis) > 2:
+                    replace_in_shape(shape, "KPI3", kpis[2])
+                else:
+                    shape.text = ""
 
     out_file = os.path.join(folder, f"BIP_MCG_Case Study_{data['case_study_name']}.pptx")
     prs.save(out_file)
