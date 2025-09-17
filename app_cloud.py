@@ -60,7 +60,7 @@ def save_extracted(case_name, texts, original_file):
 
 
 def analyze_case(texts):
-    """Call OpenAI to parse case study into structured JSON."""
+    """Call OpenAI to parse case study into structured JSON including KPIs."""
     joined_text = " ".join(texts)[:8000]  # truncate if huge
     prompt = f"""
     You are a consultant. Read this case study text and return structured JSON.
@@ -83,12 +83,18 @@ def analyze_case(texts):
       • 2–3 words each,
       • no repeats,
       • return WITHOUT the # symbol (because # will be a separate text box in PPT).
+    - KPIs:
+      • Always return exactly 3.
+      • Prefer explicit metrics if available (%, $, numbers).
+      • If not available, infer consulting-style KPIs in 3–10 words each.
+      • Each KPI must be outcome-driven (Reduced, Increased, Enhanced, Accelerated, Achieved).
+      • If fewer than 3 exist, fill missing with "N/A".
 
     Case Study Text:
     {joined_text}
 
     Return JSON with keys:
-    case_study_name, category, function, challenge, solution, results, business_categories, hashtags
+    case_study_name, category, function, challenge, solution, results, business_categories, hashtags, kpi_1, kpi_2, kpi_3
     """
 
     response = client.chat.completions.create(
@@ -155,6 +161,13 @@ def create_case_ppt(analysis_json, folder):
         clean_bcs.append("")
     clean_bcs = clean_bcs[:5]
 
+    # KPIs: clean fallback
+    kpis = [
+        data.get("kpi_1", "").strip() or "N/A",
+        data.get("kpi_2", "").strip() or "N/A",
+        data.get("kpi_3", "").strip() or "N/A",
+    ]
+
     # Replace in template
     for slide in prs.slides:
         for shape in slide.shapes:
@@ -172,6 +185,9 @@ def create_case_ppt(analysis_json, folder):
             replace_in_shape(shape, "Business Category 3", clean_bcs[2])
             replace_in_shape(shape, "Business Category 4", clean_bcs[3])
             replace_in_shape(shape, "Business Category 5", clean_bcs[4])
+            replace_in_shape(shape, "KPI1", kpis[0])
+            replace_in_shape(shape, "KPI2", kpis[1])
+            replace_in_shape(shape, "KPI3", kpis[2])
 
     out_file = os.path.join(folder, f"BIP_MCG_Case Study_{data['case_study_name']}.pptx")
     prs.save(out_file)
@@ -225,4 +241,3 @@ if uploaded_files:
             )
 
         st.success(f"✅ Case study {case_name} packaged!")
-
